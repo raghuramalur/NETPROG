@@ -53,7 +53,10 @@ int main(int argc, char *argv[]) {
         return 1;
     }
 
-    recv(client_socket, response, sizeof(response), 0);
+    int recvsize = recv(client_socket, response, sizeof(response), 0);
+    if(recvsize > 0){
+        response[recvsize] = '\0';
+    }
     printf("Response from server:\n%s\n", response);
 
     close(client_socket);
