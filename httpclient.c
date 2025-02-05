@@ -3,55 +3,62 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
+#include <arpa/inet.h>
 #include <unistd.h>
 
-int main() {
-    char buffer[4096], response[8192];
-    FILE *file;
+void get_file(int socket, char *filename) {
+    char request[1024];
+    sprintf(request, "GET /%s HTTP/1.1\r\n\r\n", filename);
+    
+    send(socket, request, strlen(request), 0);
+    char response[4096];
+    recv(socket, response, sizeof(response), 0);
+    
+    printf("Server Response:\n%s\n", response);
+}
 
-    int server_socket = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in server_address = {AF_INET, htons(8001), INADDR_ANY};
-
-    bind(server_socket, (struct sockaddr *)&server_address, sizeof(server_address));
-    listen(server_socket, 5);
-
-    printf("Server running at http://127.0.0.1:8001\n");
-
-    while (1) {
-        int client_socket = accept(server_socket, NULL, NULL);
-        recv(client_socket, buffer, sizeof(buffer), 0);
-
-        if (strncmp(buffer, "GET /", 5) == 0) {
-            char filename[100] = "index.html";
-            sscanf(buffer, "GET /%s", filename);
-            if (strcmp(filename, "/") == 0) strcpy(filename, "index.html");
-
-            file = fopen(filename, "r");
-            if (file) {
-                fread(response, 1, sizeof(response), file);
-                fclose(file);
-                sprintf(buffer, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n%s", response);
-            } else {
-                sprintf(buffer, "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n<h1>404 Not Found</h1>");
-            }
-        } else if (strncmp(buffer, "POST /", 6) == 0) {
-            char filename[100], *content;
-            sscanf(buffer, "POST /%s", filename);
-            content = strstr(buffer, "\r\n\r\n") + 4;  // Extract content after headers
-
-            file = fopen(filename, "w");
-            if (file) {
-                fputs(content, file);
-                fclose(file);
-                sprintf(buffer, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>File saved!</h1>");
-            } else {
-                sprintf(buffer, "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\n<h1>File not saved!</h1>");
-            }
-        }
-
-        send(client_socket, buffer, strlen(buffer), 0);
-        close(client_socket);
+void send_file(int socket, char *filename) {
+    FILE *file = fopen(filename, "r");
+    if (!file) {
+        printf("Error: Cannot open file %s\n", filename);
+        return;
     }
 
+    char file_content[2048], temp[1024];
+    file_content[0] = '\0';
+    while (fgets(temp, sizeof(temp), file)) strcat(file_content, temp);
+    fclose(file);
+
+    char request[4096];
+    sprintf(request, "POST /%s HTTP/1.1\r\n\r\n%s", filename, file_content);
+
+    send(socket, request, strlen(request), 0);
+    
+    char response[1024];
+    recv(socket, response, sizeof(response), 0);
+    printf("Server Response:\n%s\n", response);
+}
+
+int main(int argc, char *argv[]) {
+    if (argc < 4) {
+        printf("Usage: %s <ip> <get/send> <filename>\n", argv[0]);
+        return 1;
+    }
+
+    int client_socket = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in remote_address = {AF_INET, htons(8001)};
+    inet_pton(AF_INET, argv[1], &remote_address.sin_addr);
+
+    connect(client_socket, (struct sockaddr*)&remote_address, sizeof(remote_address));
+
+    if (strcmp(argv[2], "get") == 0) {
+        get_file(client_socket, argv[3]);
+    } else if (strcmp(argv[2], "send") == 0) {
+        send_file(client_socket, argv[3]);
+    } else {
+        printf("Unknown command\n");
+    }
+
+    close(client_socket);
     return 0;
 }
