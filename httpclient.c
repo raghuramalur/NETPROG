@@ -2,84 +2,56 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
-#include <sys/types.h>
 #include <netinet/in.h>
-#include <arpa/inet.h>
 #include <unistd.h>
 
-void get_file(int socket, char* filename) {
-    char request[1024];
-    sprintf(request, "GET /%s HTTP/1.1\r\n\n", filename);
-    
-    send(socket, request, strlen(request), 0);
-    
-    char response[4096];
-    recv(socket, response, sizeof(response), 0);
-    
-    printf("Response from server:\n%s\n", response);
-}
+int main() {
+    char buffer[4096], response[8192];
+    FILE *file;
 
-void send_file(int socket, char* filename) {
-    FILE* file = fopen(filename, "r");
-    if (file == NULL) {
-        printf("Error: Cannot open file %s\n", filename);
-        return;
+    int server_socket = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in server_address = {AF_INET, htons(8001), INADDR_ANY};
+
+    bind(server_socket, (struct sockaddr *)&server_address, sizeof(server_address));
+    listen(server_socket, 5);
+
+    printf("Server running at http://127.0.0.1:8001\n");
+
+    while (1) {
+        int client_socket = accept(server_socket, NULL, NULL);
+        recv(client_socket, buffer, sizeof(buffer), 0);
+
+        if (strncmp(buffer, "GET /", 5) == 0) {
+            char filename[100] = "index.html";
+            sscanf(buffer, "GET /%s", filename);
+            if (strcmp(filename, "/") == 0) strcpy(filename, "index.html");
+
+            file = fopen(filename, "r");
+            if (file) {
+                fread(response, 1, sizeof(response), file);
+                fclose(file);
+                sprintf(buffer, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n%s", response);
+            } else {
+                sprintf(buffer, "HTTP/1.1 404 Not Found\r\nContent-Type: text/html\r\n\r\n<h1>404 Not Found</h1>");
+            }
+        } else if (strncmp(buffer, "POST /", 6) == 0) {
+            char filename[100], *content;
+            sscanf(buffer, "POST /%s", filename);
+            content = strstr(buffer, "\r\n\r\n") + 4;  // Extract content after headers
+
+            file = fopen(filename, "w");
+            if (file) {
+                fputs(content, file);
+                fclose(file);
+                sprintf(buffer, "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<h1>File saved!</h1>");
+            } else {
+                sprintf(buffer, "HTTP/1.1 500 Internal Server Error\r\nContent-Type: text/html\r\n\r\n<h1>File not saved!</h1>");
+            }
+        }
+
+        send(client_socket, buffer, strlen(buffer), 0);
+        close(client_socket);
     }
 
-    char file_content[2048];
-    char temp[1024];
-    file_content[0] = '\0';
-    
-    while(fgets(temp, 1024, file)) {
-        strcat(file_content, temp);
-    }
-    fclose(file);
-
-    char request[4096];
-    sprintf(request, 
-        "POST / HTTP/1.1\r\n"
-        "filename=%s\r\n"
-        "\r\n"
-        "%s", 
-        filename, file_content);
-
-    send(socket, request, strlen(request), 0);
-    
-    char response[1024];
-    recv(socket, response, sizeof(response), 0);
-    printf("Server response:\n%s\n", response);
-}
-
-int main(int argc, char *argv[]) {
-    if (argc < 4) {
-        printf("Usage: %s <ip> <command> <filename>\n", argv[0]);
-        printf("Commands: get, send\n");
-        return 1;
-    }
-
-    char* address = argv[1];
-    char* command = argv[2];
-    char* filename = argv[3];
-
-    int client_socket = socket(AF_INET, SOCK_STREAM, 0);
-    
-    struct sockaddr_in remote_address;
-    remote_address.sin_family = AF_INET;
-    remote_address.sin_port = htons(8001);
-    inet_aton(address, &remote_address.sin_addr);
-
-    connect(client_socket, (struct sockaddr*)&remote_address, sizeof(remote_address));
-
-    if (strcmp(command, "get") == 0) {
-        get_file(client_socket, filename);
-    }
-    else if (strcmp(command, "send") == 0) {
-        send_file(client_socket, filename);
-    }
-    else {
-        printf("Unknown command: %s\n", command);
-    }
-
-    close(client_socket);
     return 0;
 }
