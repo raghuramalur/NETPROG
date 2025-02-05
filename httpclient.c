@@ -2,62 +2,59 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
 
-void get_file(int socket, char *filename) {
-    char request[1024];
-    sprintf(request, "GET /%s HTTP/1.1\r\n\r\n", filename);
-    
-    send(socket, request, strlen(request), 0);
-    char response[4096];
-    recv(socket, response, sizeof(response), 0);
-    
-    printf("Server Response:\n%s\n", response);
-}
-
-void send_file(int socket, char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (!file) {
-        printf("Error: Cannot open file %s\n", filename);
-        return;
-    }
-
-    char file_content[2048], temp[1024];
-    file_content[0] = '\0';
-    while (fgets(temp, sizeof(temp), file)) strcat(file_content, temp);
-    fclose(file);
-
-    char request[4096];
-    sprintf(request, "POST /%s HTTP/1.1\r\n\r\n%s", filename, file_content);
-
-    send(socket, request, strlen(request), 0);
-    
-    char response[1024];
-    recv(socket, response, sizeof(response), 0);
-    printf("Server Response:\n%s\n", response);
-}
-
 int main(int argc, char *argv[]) {
-    if (argc < 4) {
-        printf("Usage: %s <ip> <get/send> <filename>\n", argv[0]);
+    if (argc < 3) {
+        printf("Usage: %s <server_ip> <GET/POST> [file_to_post]\n", argv[0]);
         return 1;
     }
 
+    char* address = argv[1];
+    char* method = argv[2];
+
     int client_socket = socket(AF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in remote_address = {AF_INET, htons(8001)};
-    inet_pton(AF_INET, argv[1], &remote_address.sin_addr);
+    struct sockaddr_in remoteaddress;
+    remoteaddress.sin_family = AF_INET;
+    remoteaddress.sin_port = htons(8001);
+    inet_aton(address, &remoteaddress.sin_addr);
 
-    connect(client_socket, (struct sockaddr*)&remote_address, sizeof(remote_address));
+    connect(client_socket, (struct sockaddr *)&remoteaddress, sizeof(remoteaddress));
 
-    if (strcmp(argv[2], "get") == 0) {
-        get_file(client_socket, argv[3]);
-    } else if (strcmp(argv[2], "send") == 0) {
-        send_file(client_socket, argv[3]);
-    } else {
-        printf("Unknown command\n");
+    char request[4096];
+    char response[4096];
+
+    if (strcmp(method, "GET") == 0) {
+        strcpy(request, "GET / HTTP/1.1\r\n\n");
+        send(client_socket, request, strlen(request), 0);
+    } 
+    else if (strcmp(method, "POST") == 0 && argc == 4) {
+        FILE* file = fopen(argv[3], "r");
+        if (!file) {
+            printf("File not found!\n");
+            return 1;
+        }
+
+        char file_data[2048] = "";
+        char temp[1024];
+        while (fgets(temp, sizeof(temp), file)) {
+            strcat(file_data, temp);
+        }
+        fclose(file);
+
+        sprintf(request, "POST / HTTP/1.1\r\nContent-Length: %lu\r\n\r\n%s", strlen(file_data), file_data);
+        send(client_socket, request, strlen(request), 0);
+    } 
+    else {
+        printf("Invalid method. Use GET or POST.\n");
+        return 1;
     }
+
+    recv(client_socket, response, sizeof(response), 0);
+    printf("Response from server:\n%s\n", response);
 
     close(client_socket);
     return 0;
